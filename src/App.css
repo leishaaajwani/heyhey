@@ -1,0 +1,8 @@
+body { background: #0f172a; color: white; font-family: sans-serif; padding: 20px; }
+.container { max-width: 800px; margin: 0 auto; }
+.app-header { display: flex; justify-content: space-between; border-bottom: 1px solid #334155; padding-bottom: 10px; }
+.artifact-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 20px; }
+.card { background: #1e293b; padding: 15px; border-radius: 8px; border: 1px solid #334155; }
+.primary-btn { background: #3b82f6; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; }
+.form-container { display: flex; flex-direction: column; gap: 15px; background: #1e293b; padding: 20px; border-radius: 8px; }
+input { padding: 10px; background: #0f172a; color: white; border: 1px solid #334155; }
