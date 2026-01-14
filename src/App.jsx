@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from "react";
+import "./App.css";
+import React, { useState, useEffect, useRef } from "react";
 import axios from "axios";
 import { Trash2, Edit3, Eye, Plus, X, Upload, ImageIcon, ChevronLeft } from "lucide-react";
 import "./App.css";
@@ -15,14 +16,25 @@ export default function App() {
   const [formData, setFormData] = useState({ name: "", description: "" });
   const [imageFile, setImageFile] = useState(null);
 
+  // New: error state and file input ref
+  const [error, setError] = useState(null);
+  const fileInputRef = useRef(null);
+
+  useEffect(() => {
+    // helpful log for debugging environment / CORS/API URL issues
+    console.log("API_BASE_URL", API_BASE_URL);
+  }, []);
+
   // --- 1. BROWSE ENTRIES (List) ---
   const fetchArtifacts = async () => {
     setLoading(true);
+    setError(null);
     try {
       const res = await axios.get(`${API_BASE_URL}/artifacts`);
-      setArtifacts(res.data);
+      setArtifacts(res.data || []);
     } catch (err) {
       console.error("Failed to fetch artifacts", err);
+      setError(err?.response?.data?.message || err.message || "Failed to fetch artifacts");
     } finally {
       setLoading(false);
     }
@@ -30,49 +42,102 @@ export default function App() {
 
   useEffect(() => { fetchArtifacts(); }, []);
 
+  // keep form in sync when selecting an artifact for edit
+  useEffect(() => {
+    if (viewState === "EDIT" && selectedArtifact) {
+      setFormData({ name: selectedArtifact.name || "", description: selectedArtifact.description || "" });
+    }
+  }, [viewState, selectedArtifact]);
+
   // --- 2. CREATE & UPLOAD ---
   const handleCreate = async (e) => {
     e.preventDefault();
+    setLoading(true);
+    setError(null);
     try {
       const res = await axios.post(`${API_BASE_URL}/artifacts`, formData);
       if (imageFile) {
         await handleImageUpload(res.data.id);
       }
       resetForm();
-    } catch (err) { alert("Error creating artifact"); }
+    } catch (err) {
+      console.error("Error creating artifact", err);
+      setError(err?.response?.data?.message || err.message || "Error creating artifact");
+      alert(`Create failed: ${error || err.message}`);
+    } finally {
+      setLoading(false);
+    }
   };
 
   // --- 3. UPDATE ARTIFACT ---
   const handleUpdate = async (e) => {
     e.preventDefault();
+    setLoading(true);
+    setError(null);
     try {
-      await axios.put(`${API_BASE_URL}/artifacts/${selectedArtifact.id}`, formData);
+      const id = selectedArtifact?.id;
+      if (!id) throw new Error("No selected artifact to update");
+      await axios.put(`${API_BASE_URL}/artifacts/${id}`, formData);
       if (imageFile) {
-        await handleImageUpload(selectedArtifact.id);
+        await handleImageUpload(id);
       }
       resetForm();
-    } catch (err) { alert("Update failed"); }
+    } catch (err) {
+      console.error("Update failed", err);
+      setError(err?.response?.data?.message || err.message || "Update failed");
+      alert(`Update failed: ${error || err.message}`);
+    } finally {
+      setLoading(false);
+    }
   };
 
   // --- 4. DELETE ARTIFACT ---
   const handleDelete = async (id) => {
-    if (!confirm("Delete this artifact permanently?")) return;
+    if (!window.confirm("Delete this artifact permanently?")) return;
+    setLoading(true);
+    setError(null);
     try {
       await axios.delete(`${API_BASE_URL}/artifacts/${id}`);
-      fetchArtifacts();
-    } catch (err) { alert("Delete failed"); }
+      // refresh list after delete
+      await fetchArtifacts();
+      // if currently viewing/dealing with this artifact, drop selection
+      if (selectedArtifact?.id === id) {
+        setSelectedArtifact(null);
+        setViewState("LIST");
+      }
+    } catch (err) {
+      console.error("Delete failed", err);
+      setError(err?.response?.data?.message || err.message || "Delete failed");
+      alert(`Delete failed: ${error || err.message}`);
+    } finally {
+      setLoading(false);
+    }
   };
 
   // --- 5. IMAGE UPLOAD HELPER ---
   const handleImageUpload = async (id) => {
-    const data = new FormData();
-    data.append("file", imageFile);
-    await axios.post(`${API_BASE_URL}/artifacts/${id}/upload`, data);
+    if (!imageFile) return;
+    setError(null);
+    try {
+      const data = new FormData();
+      data.append("file", imageFile);
+      await axios.post(`${API_BASE_URL}/artifacts/${id}/upload`, data, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      // Ensure latest artifact data is fetched after upload
+      await fetchArtifacts();
+    } catch (err) {
+      console.error("Image upload failed", err);
+      setError(err?.response?.data?.message || err.message || "Image upload failed");
+      alert(`Upload failed: ${error || err.message}`);
+    }
   };
 
   const resetForm = () => {
     setFormData({ name: "", description: "" });
     setImageFile(null);
+    // clear file input DOM value if available
+    if (fileInputRef.current) fileInputRef.current.value = null;
     setViewState("LIST");
     fetchArtifacts();
   };
@@ -80,11 +145,15 @@ export default function App() {
   // --- RENDER HELPERS ---
   const renderFingerprint = (data) => {
     if (!data) return <p>No fingerprinting data available.</p>;
+    const circ = data.irregularities?.circularity_score ?? "N/A";
+    const edge = data.irregularities?.edge_jaggedness ?? "N/A";
+    const hsvArr = data.dominant_color?.hsv;
+    const hsvText = Array.isArray(hsvArr) ? hsvArr.map(n => Math.round(n)).join(", ") : "N/A";
     return (
       <div className="metrics-box">
-        <div className="stat"><span>Irregularity:</span> {data.irregularities?.circularity_score?.toFixed(3)}</div>
-        <div className="stat"><span>Edge Jaggedness:</span> {data.irregularities?.edge_jaggedness?.toFixed(3)}</div>
-        <div className="stat"><span>Color (HSV):</span> {data.dominant_color?.hsv?.map(n => Math.round(n)).join(", ")}</div>
+        <div className="stat"><span>Irregularity:</span> {typeof circ === "number" ? circ.toFixed(3) : circ}</div>
+        <div className="stat"><span>Edge Jaggedness:</span> {typeof edge === "number" ? edge.toFixed(3) : edge}</div>
+        <div className="stat"><span>Color (HSV):</span> {hsvText}</div>
       </div>
     );
   };
@@ -99,6 +168,9 @@ export default function App() {
           </button>
         )}
       </header>
+
+      {error && <div className="error">{error}</div>}
+      {loading && <div className="loading">Working…</div>}
 
       {/* VIEW: BROWSE LIST */}
       {viewState === "LIST" && (
@@ -137,11 +209,11 @@ export default function App() {
             />
             <div className="file-input">
               <label><Upload size={18}/> {imageFile ? imageFile.name : "Upload Image"}</label>
-              <input type="file" onChange={e => setImageFile(e.target.files[0])} />
+              <input ref={fileInputRef} type="file" onChange={e => setImageFile(e.target.files[0])} />
             </div>
             <div className="form-buttons">
-              <button type="button" onClick={() => setViewState("LIST")}>Cancel</button>
-              <button type="submit" className="btn-primary">Save Artifact</button>
+              <button type="button" onClick={resetForm}>Cancel</button>
+              <button type="submit" className="btn-primary" disabled={loading}>{viewState === "CREATE" ? "Create" : "Save"}</button>
             </div>
           </form>
         </div>
